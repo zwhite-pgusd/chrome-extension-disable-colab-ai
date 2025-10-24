@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
+  <app appid="jjiggjhefkabdggppnhjfnjnliphdndl">
+    <updatecheck
+      codebase="https://zwhite-pgusd.github.io/chrome-extension-disable-colab-ai/dist/1.0.0/extension.crx"
+      version="1.0.0" />
+  </app>
+</gupdate>
