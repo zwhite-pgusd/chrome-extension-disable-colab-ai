@@ -1,0 +1,15 @@
+/* Light-DOM paint-time hide (shadow DOM requires JS removal) */
+colab-composer,
+colab-cell-placeholder,
+colab-composer-floating-spark,
+md-icon-button[data-aria-label="Available AI features"],
+md-icon-button[aria-labelledby^="ai-menu-anchor"],
+md-icon-button[aria-describedby^="ai-menu-anchor-"],
+md-icon-button[id^="ai-menu-anchor-"] {
+  display: none !important;
+}
+
+md-icon-button[aria-label="Available AI features"],
+colab-cell-placeholder[widgetid="editor.widget.cellPlaceholderHint"] {
+  display: none !important;
+}
