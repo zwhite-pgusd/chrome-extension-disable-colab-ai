@@ -1,5 +1,5 @@
 {
-  "manifest_version": 4,
+  "manifest_version": 3,
   "name": "AI Toggle",
   "version": "1.0.1",
   "description": "Chrome extension to disable AI features in Google Colab.",
