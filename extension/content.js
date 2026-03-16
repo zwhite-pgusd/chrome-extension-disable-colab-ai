@@ -1,6 +1,7 @@
-// Disable Google Colab AI — v1.3
+// Disable Google Colab AI — v1.4
 // - Shadow-DOM aware
 // - Removes AI toolbar button and its linked menu/tooltip
+// - Removes colab-cell-next-steps (AI "Explain error" / next-steps bar)
 // - MutationObserver + periodic sweep to survive Lit re-renders
 
 const BUTTON_SELECTORS = [
@@ -14,7 +15,8 @@ const BUTTON_SELECTORS = [
 const WIDGET_SELECTORS = [
   'colab-composer',
   'colab-cell-placeholder',
-  'colab-composer-floating-spark'
+  'colab-composer-floating-spark',
+  'colab-cell-next-steps'
 ];
 
 // ===== Shadow DOM helpers =====
@@ -72,7 +74,7 @@ function removeButtonAndCompanions(btn) {
 }
 
 function sweep(root = document) {
-  // 1) Remove the standalone widgets (composer/placeholder/spark)
+  // 1) Remove the standalone widgets (composer/placeholder/spark/next-steps)
   for (const node of findAll(root, WIDGET_SELECTORS)) removeNode(node);
 
   // 2) Remove the AI toolbar button(s) and their companions
