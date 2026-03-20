@@ -1,22 +1,22 @@
-// Disable Google Colab AI — v1.4
+// Disable Google Colab AI — v1.5
 // - Shadow-DOM aware
 // - Removes AI toolbar button and its linked menu/tooltip
-// - Removes colab-cell-next-steps (AI "Explain error" / next-steps bar)
+// - Removes "Explain error" AI button specifically (avoids breaking next-steps container)
 // - MutationObserver + periodic sweep to survive Lit re-renders
 
 const BUTTON_SELECTORS = [
   'md-icon-button[data-aria-label="Available AI features"]',
-  'md-icon-button[aria-label="Available AI features"]',
-  'md-icon-button[aria-labelledby^="ai-menu-anchor"]',
-  'md-icon-button[aria-describedby^="ai-menu-anchor-"]',
-  'md-icon-button[id^="ai-menu-anchor-"]'
+'md-icon-button[aria-label="Available AI features"]',
+'md-icon-button[aria-labelledby^="ai-menu-anchor"]',
+'md-icon-button[aria-describedby^="ai-menu-anchor-"]',
+'md-icon-button[id^="ai-menu-anchor-"]',
+'md-outlined-button[data-test-id="explain-error"]'
 ];
 
 const WIDGET_SELECTORS = [
   'colab-composer',
-  'colab-cell-placeholder',
-  'colab-composer-floating-spark',
-  'colab-cell-next-steps'
+'colab-cell-placeholder',
+'colab-composer-floating-spark'
 ];
 
 // ===== Shadow DOM helpers =====
@@ -74,7 +74,7 @@ function removeButtonAndCompanions(btn) {
 }
 
 function sweep(root = document) {
-  // 1) Remove the standalone widgets (composer/placeholder/spark/next-steps)
+  // 1) Remove the standalone widgets (composer/placeholder/spark)
   for (const node of findAll(root, WIDGET_SELECTORS)) removeNode(node);
 
   // 2) Remove the AI toolbar button(s) and their companions
