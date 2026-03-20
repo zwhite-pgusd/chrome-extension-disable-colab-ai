@@ -1,140 +1,660 @@
-// Disable Google Colab AI + Block YouTube Embeds + Hide Google AI Overview — v1.0.5
+// Purpose:
+// 1) Disable Google Colab AI UI
+// 2) Block YouTube embedding in Google Docs and Google Slides
+// 3) Suppress Google Search AI UI while minimizing collateral damage
 //
-// Colab AI blocks:
-// - Shadow-DOM aware
-// - Removes AI toolbar button and its linked menu/tooltip
-// - Removes "Explain error" AI button specifically
-// - MutationObserver + periodic sweep to survive Lit re-renders
-//
-// Slides/Docs YouTube block:
-// - Hides the YouTube tab panel inside the "Insert video" dialog
-// - Hides the YouTube tab button so users cannot switch to it
-// - Leaves the Google Drive tab and dialog chrome fully intact
-//
-// Google Search AI Overview block:
-// - Targets the AI Overview container by multiple stable attributes
-// - Uses layered selectors so if one changes, others still catch it
+// Key design choices:
+// - Route by URL / frame context so each site only runs its own logic.
+// - Docs/Slides support runs in child frames as well because the Insert video
+//   picker is rendered inside an iframe in current Google editors.
+// - Search redirect to Web mode only happens when AI Overview is actually
+//   detected, which avoids degrading plain navigational searches like "docs"
+//   or "slides".
+
+(function () {
+  "use strict";
+
+// ===== Shared configuration =====
+const URL_CHECK_INTERVAL_MS = 500;
+
+// ===== Google Search configuration =====
+const WEB_FILTER_VALUE = "14";
+const REDIRECT_SESSION_KEY = "pgext_web_filter_redirected_query";
+const AI_OVERVIEW_LABELS = new Set([
+  "AI Overview"
+]);
+const BLOCKED_SEARCH_TABS = new Set([
+  "AI Mode",
+  "Short videos",
+  "Shopping",
+  "News",
+  "Forums",
+  "Flights",
+  "Finance",
+  "Videos",
+  "Books",
+  "Maps"
+]);
 
 // ===== Colab selectors =====
-
-const BUTTON_SELECTORS = [
+const COLAB_BUTTON_SELECTORS = [
   'md-icon-button[data-aria-label="Available AI features"]',
-'md-icon-button[aria-label="Available AI features"]',
-'md-icon-button[aria-labelledby^="ai-menu-anchor"]',
-'md-icon-button[aria-describedby^="ai-menu-anchor-"]',
-'md-icon-button[id^="ai-menu-anchor-"]',
-'md-outlined-button[data-test-id="explain-error"]'
+  'md-icon-button[aria-label="Available AI features"]',
+  'md-icon-button[aria-labelledby^="ai-menu-anchor"]',
+  'md-icon-button[aria-describedby^="ai-menu-anchor-"]',
+  'md-icon-button[id^="ai-menu-anchor-"]',
+  'md-outlined-button[data-test-id="explain-error"]',
+  'md-icon-button[data-test-id="explain-error"]'
 ];
 
-const WIDGET_SELECTORS = [
-  'colab-composer',
-'colab-cell-placeholder',
-'colab-composer-floating-spark'
+const COLAB_WIDGET_SELECTORS = [
+  "colab-composer",
+  "colab-cell-placeholder",
+  "colab-composer-floating-spark"
 ];
 
-// ===== Slides/Docs YouTube selectors =====
-const YOUTUBE_SELECTORS = [
-  'div[jsname="MVsrn"]',   // YouTube search panel
-'div[jsname="h0T7hb"]'  // YouTube tab button
+const COLAB_MENU_ITEM_SELECTORS = [
+  'md-menu-item[command="generate-code"]',
+  'md-menu-item[command="explain-cell"]',
+  'md-menu-item[command="transform-code"]'
 ];
 
-// ===== Google Search AI Overview selectors =====
-// Primary: the outermost wrapper div carries data-hveid="CAoQBg" consistently
-// across searches. The inner div[jsname="Zlxsqf"] is the content block itself.
-// We target both so either one is sufficient to remove the whole section.
-const AI_OVERVIEW_SELECTORS = [
-  'div[data-hveid="CAoQBg"]',  // outermost AI Overview wrapper
-'div[jsname="Zlxsqf"]',      // inner AI Overview content block
-'div[data-mg-cp="YzCcne"]'   // data-mcpr container (extra safety net)
+// ===== Docs / Slides configuration =====
+const INSERT_VIDEO_TITLE = "Insert video";
+const YOUTUBE_TAB_TEXT = "YouTube";
+const GOOGLE_DRIVE_TAB_TEXT = "Google Drive";
+const YOUTUBE_INPUT_MARKERS = [
+  "youtube",
+  "paste url"
 ];
 
-// ===== Shadow DOM helpers =====
-function* walkDeep(node) {
-  if (!node) return;
-  yield node;
-  if (node.shadowRoot) yield* walkDeep(node.shadowRoot);
-  if (node.children) for (const c of node.children) yield* walkDeep(c);
-  if ((node.nodeType === 9 || node.nodeType === 11) && node.childNodes) {
-    for (const c of node.childNodes) if (c.nodeType === 1) yield* walkDeep(c);
+// ===== Shared helpers =====
+function getUrl() {
+  return new URL(location.href);
+}
+
+function safeText(value) {
+  return (value || "").replace(/\s+/g, " ").trim();
+}
+
+function lowerText(value) {
+  return safeText(value).toLowerCase();
+}
+
+function safeMatches(el, selector) {
+  try {
+    return Boolean(el?.matches?.(selector));
+  } catch {
+    return false;
   }
 }
-const safeMatches = (el, sel) => { try { return el.matches(sel); } catch { return false; } };
 
-function findAll(root, selectors) {
-  const out = new Set();
-  for (const n of walkDeep(root)) {
-    if (n.nodeType !== 1) continue;
-    if (n.matches && selectors.some(s => safeMatches(n, s))) out.add(n);
-    if (n.querySelectorAll) {
-      for (const s of selectors) for (const el of n.querySelectorAll(s)) out.add(el);
+function hideElement(el) {
+  if (!el || el.dataset.pgextHidden === "1") return;
+  el.dataset.pgextHidden = "1";
+  el.style.setProperty("display", "none", "important");
+  el.setAttribute("aria-hidden", "true");
+  el.setAttribute("tabindex", "-1");
+}
+
+function removeNode(el) {
+  if (!el) return;
+  try {
+    el.remove();
+  } catch {
+    hideElement(el);
+  }
+}
+
+function startBurst(callback, intervalMs = 250, maxRuns = 20) {
+  let runs = 0;
+  const timer = setInterval(() => {
+    callback();
+    runs += 1;
+    if (runs >= maxRuns) clearInterval(timer);
+  }, intervalMs);
+    return timer;
+}
+
+function startUrlWatcher(onChange) {
+  let lastHref = location.href;
+  return setInterval(() => {
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    onChange();
+  }, URL_CHECK_INTERVAL_MS);
+}
+
+function getReferrerUrl() {
+  try {
+    return document.referrer ? new URL(document.referrer) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ===== Shared shadow DOM traversal =====
+function* walkDeep(node) {
+  if (!node) return;
+
+  yield node;
+
+  if (node.shadowRoot) {
+    yield* walkDeep(node.shadowRoot);
+  }
+
+  if (node.children) {
+    for (const child of node.children) {
+      yield* walkDeep(child);
     }
   }
+
+  if ((node.nodeType === Node.DOCUMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) && node.childNodes) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        yield* walkDeep(child);
+      }
+    }
+  }
+}
+
+function findAllDeep(root, selectors) {
+  const out = new Set();
+
+  for (const node of walkDeep(root)) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) continue;
+
+    if (selectors.some((selector) => safeMatches(node, selector))) {
+      out.add(node);
+    }
+
+    if (typeof node.querySelectorAll === "function") {
+      for (const selector of selectors) {
+        for (const match of node.querySelectorAll(selector)) {
+          out.add(match);
+        }
+      }
+    }
+  }
+
   return [...out];
 }
 
-// ===== Removal routines =====
-function removeNode(el) {
-  try { el.remove(); }
-  catch { try { el.style.setProperty('display','none','important'); } catch {} }
+// ===== Route helpers =====
+function isColabPage(url = getUrl()) {
+  return url.hostname === "colab.research.google.com";
 }
 
-function removeButtonAndCompanions(btn) {
-  removeNode(btn);
+function isDocsOrSlidesUrl(url) {
+  return Boolean(
+    url &&
+    url.hostname === "docs.google.com" &&
+    (url.pathname.startsWith("/document/") || url.pathname.startsWith("/presentation/"))
+  );
+}
 
-  const id = btn.getAttribute('id');
-  const labelledBy = btn.getAttribute('aria-labelledby');
-  const describedBy = btn.getAttribute('aria-describedby');
-  const anchorId = id || labelledBy || (describedBy ? describedBy.replace(/-tooltip$/, '') : null);
+function isDocsOrSlidesContext() {
+  const url = getUrl();
+  if (isDocsOrSlidesUrl(url)) return true;
 
-  if (anchorId) {
-    for (const n of findAll(document, [
+  const referrerUrl = getReferrerUrl();
+  if (isDocsOrSlidesUrl(referrerUrl)) return true;
+
+  return false;
+}
+
+function isGoogleSearchPage(url = getUrl()) {
+  return url.hostname === "www.google.com" && url.pathname === "/search";
+}
+
+// ===== Colab =====
+function initColab() {
+  const observedRoots = new WeakSet();
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        discoverShadowRoots(node);
+        sweepColab(node);
+      }
+    }
+  });
+
+  function observeRoot(root) {
+    if (!root || observedRoots.has(root)) return;
+    observedRoots.add(root);
+    observer.observe(root, { childList: true, subtree: true });
+  }
+
+  function discoverShadowRoots(root) {
+    for (const node of walkDeep(root)) {
+      if (node?.shadowRoot) {
+        observeRoot(node.shadowRoot);
+      }
+    }
+  }
+
+  function removeButtonAndCompanions(button) {
+    if (!button) return;
+
+    const id = button.getAttribute("id");
+    const labelledBy = button.getAttribute("aria-labelledby");
+    const describedBy = button.getAttribute("aria-describedby");
+    const anchorId = id || labelledBy || (describedBy ? describedBy.replace(/-tooltip$/, "") : null);
+
+    removeNode(button);
+
+    if (!anchorId) return;
+
+    const companionSelectors = [
       `md-menu[anchor="${anchorId}"]`,
       `md-menu[aria-labelledby="${anchorId}"]`,
       `colab-tooltip-trigger[for="${anchorId}"]`,
       `#${anchorId}-tooltip`
-    ])) removeNode(n);
+    ];
+
+    for (const companion of findAllDeep(document, companionSelectors)) {
+      removeNode(companion);
+    }
+  }
+
+  function sweepColab(root = document) {
+    for (const widget of findAllDeep(root, COLAB_WIDGET_SELECTORS)) {
+      removeNode(widget);
+    }
+
+    for (const button of findAllDeep(root, COLAB_BUTTON_SELECTORS)) {
+      removeButtonAndCompanions(button);
+    }
+
+    for (const menuItem of findAllDeep(root, COLAB_MENU_ITEM_SELECTORS)) {
+      removeNode(menuItem);
+    }
+  }
+
+  observeRoot(document.documentElement);
+  discoverShadowRoots(document.documentElement);
+  sweepColab(document);
+  startBurst(() => sweepColab(document));
+
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      discoverShadowRoots(document.documentElement);
+      sweepColab(document);
+    },
+    { once: true }
+  );
+}
+
+// ===== Docs / Slides =====
+function initDocsSlides() {
+  function findInsertVideoDialogs(root = document) {
+    const dialogs = new Set();
+    const headings = [];
+
+    const headingSelector = '[role="heading"], h1, h2, h3';
+
+    if (root.nodeType === Node.ELEMENT_NODE && safeMatches(root, headingSelector)) {
+      headings.push(root);
+    }
+
+    if (typeof root.querySelectorAll === "function") {
+      headings.push(...root.querySelectorAll(headingSelector));
+    }
+
+    for (const heading of headings) {
+      if (safeText(heading.textContent) !== INSERT_VIDEO_TITLE) continue;
+
+      const dialog =
+      heading.closest('[role="dialog"]') ||
+      heading.closest('[role="banner"]') ||
+      heading.parentElement?.closest('div') ||
+      heading.parentElement;
+
+      if (dialog) {
+        dialogs.add(dialog);
+      }
+    }
+
+    return [...dialogs];
+  }
+
+  function getTabByText(container, text) {
+    if (!container) return null;
+    for (const tab of container.querySelectorAll('[role="tab"]')) {
+      if (safeText(tab.textContent) === text) {
+        return tab;
+      }
+    }
+    return null;
+  }
+
+  function getReasonableWrapper(el, boundary) {
+    if (!el) return null;
+
+    let node = el;
+    while (
+      node.parentElement &&
+      node.parentElement !== boundary &&
+      node.parentElement !== document.body &&
+      node.parentElement.children.length === 1
+    ) {
+      node = node.parentElement;
+    }
+
+    return node;
+  }
+
+  function hideYoutubeSearchArea(dialog) {
+    if (!dialog) return;
+
+    const candidates = new Set();
+
+    for (const input of dialog.querySelectorAll('input[aria-label], input[value]')) {
+      const markerText = lowerText(
+        input.getAttribute('aria-label') ||
+        input.getAttribute('value') ||
+        input.value ||
+        ''
+      );
+
+      if (!YOUTUBE_INPUT_MARKERS.every((marker) => markerText.includes(marker))) continue;
+
+      const searchRoot = input.closest('[role="search"]') || input.closest('div');
+      if (searchRoot) candidates.add(searchRoot);
+
+      const controlledId = input.getAttribute('aria-controls') || input.getAttribute('aria-owns');
+      if (controlledId) {
+        const listbox = dialog.querySelector(`#${CSS.escape(controlledId)}`);
+        if (listbox) candidates.add(listbox);
+      }
+    }
+
+    for (const candidate of candidates) {
+      hideElement(getReasonableWrapper(candidate, dialog) || candidate);
+    }
+  }
+
+  function forceDriveTab(dialog) {
+    const youtubeTab = getTabByText(dialog, YOUTUBE_TAB_TEXT);
+    const driveTab = getTabByText(dialog, GOOGLE_DRIVE_TAB_TEXT);
+
+    if (!youtubeTab) return;
+
+    const youtubeSelected = youtubeTab.getAttribute('aria-selected') === 'true';
+    if (youtubeSelected && driveTab) {
+      driveTab.click();
+    }
+
+    hideElement(getReasonableWrapper(youtubeTab, dialog) || youtubeTab);
+  }
+
+  function sweepDocsSlides(root = document) {
+    for (const dialog of findInsertVideoDialogs(root)) {
+      forceDriveTab(dialog);
+      hideYoutubeSearchArea(dialog);
+    }
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        sweepDocsSlides(node);
+      }
+    }
+  });
+
+  sweepDocsSlides(document);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  startBurst(() => sweepDocsSlides(document), 250, 20);
+  startUrlWatcher(() => sweepDocsSlides(document));
+
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => sweepDocsSlides(document),
+                            { once: true }
+  );
+}
+
+// ===== Google Search =====
+function initGoogleSearch() {
+  function getCurrentQuery(url = getUrl()) {
+    return safeText(url.searchParams.get("q"));
+  }
+
+  function hasExplicitMode(url = getUrl()) {
+    return url.searchParams.has("udm");
+  }
+
+  function wasJustRedirected(query) {
+    try {
+      return sessionStorage.getItem(REDIRECT_SESSION_KEY) === query;
+    } catch {
+      return false;
+    }
+  }
+
+  function markRedirected(query) {
+    try {
+      sessionStorage.setItem(REDIRECT_SESSION_KEY, query);
+    } catch {}
+  }
+
+  function clearRedirectMark() {
+    try {
+      sessionStorage.removeItem(REDIRECT_SESSION_KEY);
+    } catch {}
+  }
+
+  function looksLikeSearchModeNav(el) {
+    return Boolean(
+      el.closest("[role='navigation']") ||
+      el.closest("#hdtb") ||
+      el.closest(".crJ18e") ||
+      el.closest(".T47uwc")
+    );
+  }
+
+  function getMenuItemRoot(el) {
+    // Find the semantic list item first
+    const semanticRoot = el.closest("[role='listitem'], [role='menuitem'], [role='option'], li");
+    const base = (semanticRoot && semanticRoot !== document.body) ? semanticRoot : el;
+
+    // Then keep climbing single-child wrapper divs that have no meaningful role
+    // themselves — these are the ghost slot containers Google wraps each More
+    // menu item in (e.g. div[role="none"], div.bsmXxe) which stay behind as
+    // blank entries after the inner content is removed.
+    let node = base;
+    while (
+      node.parentElement &&
+      node.parentElement !== document.body &&
+      node.parentElement.children.length === 1 &&
+      looksLikeSearchModeNav(node.parentElement)
+    ) {
+      const parentRole = node.parentElement.getAttribute("role") || "";
+      // Stop if parent is a meaningful container (menu, listbox, navigation)
+      if (["menu", "listbox", "navigation", "toolbar"].includes(parentRole)) break;
+      node = node.parentElement;
+    }
+    return node;
+  }
+
+  function hideBlockedTabs(root = document) {
+    const candidates = new Set();
+    const selector = [
+      "#hdtb a",
+      "#hdtb div[role='link']",
+      "#hdtb span",
+      "[role='navigation'] a",
+      "[role='navigation'] div[role='link']",
+      "[role='navigation'] span"
+    ].join(", ");
+
+    if (root.nodeType === Node.ELEMENT_NODE && safeMatches(root, selector)) {
+      candidates.add(root);
+    }
+
+    if (typeof root.querySelectorAll === "function") {
+      for (const node of root.querySelectorAll(selector)) {
+        candidates.add(node);
+      }
+    }
+
+    for (const candidate of candidates) {
+      if (!looksLikeSearchModeNav(candidate)) continue;
+      const text = safeText(candidate.textContent);
+      if (!BLOCKED_SEARCH_TABS.has(text)) continue;
+      removeNode(getMenuItemRoot(candidate));
+    }
+
+    for (const menu of document.querySelectorAll("[role='menu'], [role='listbox'], #hdtb-more-mn, .nPDzT")) {
+      // A menu is considered empty if every child element is either hidden by us
+      // or has no visible text content. Text nodes with only whitespace don't count.
+      const hasVisibleContent = [...menu.children].some((child) => {
+        if (child.dataset.pgextHidden === "1") return false;
+        if (getComputedStyle(child).display === "none") return false;
+        return safeText(child.textContent) !== "";
+      });
+
+      if (!hasVisibleContent) {
+        removeNode(menu);
+      }
+    }
+  }
+
+  function isAiOverviewLabel(text) {
+    return AI_OVERVIEW_LABELS.has(safeText(text));
+  }
+
+  function findAiOverviewAnchors(root = document) {
+    const anchors = new Set();
+    const headingSelector = "h1, h2, h3";
+
+    if (root.nodeType === Node.ELEMENT_NODE && safeMatches(root, headingSelector) && isAiOverviewLabel(root.textContent)) {
+      anchors.add(root);
+    }
+
+    if (typeof root.querySelectorAll === "function") {
+      for (const heading of root.querySelectorAll(headingSelector)) {
+        if (isAiOverviewLabel(heading.textContent)) {
+          anchors.add(heading);
+        }
+      }
+    }
+
+    return [...anchors];
+  }
+
+  function findSearchResultContainer(anchor) {
+    let node = anchor?.parentElement || null;
+
+    while (node && node !== document.body) {
+      const parent = node.parentElement;
+      const parentId = parent?.id || "";
+      const isTopLevelResultBlock = parentId === "search" || parentId === "rso" || parentId === "rcnt";
+      const looksLikeResultCard = node.tagName === "DIV" && (
+        node.hasAttribute("data-async-type") ||
+        node.hasAttribute("data-hveid") ||
+        isTopLevelResultBlock
+      );
+
+      if (looksLikeResultCard) {
+        return node;
+      }
+
+      node = parent;
+    }
+
+    return null;
+  }
+
+  function hideAiOverview(root = document) {
+    for (const anchor of findAiOverviewAnchors(root)) {
+      const container = findSearchResultContainer(anchor);
+      if (container) {
+        hideElement(container);
+      }
+    }
+  }
+
+  function shouldRedirectToWebFilter(root = document) {
+    const url = getUrl();
+    if (!isGoogleSearchPage(url)) return false;
+    if (hasExplicitMode(url)) return false;
+
+    const query = getCurrentQuery(url);
+    if (!query) return false;
+
+    return findAiOverviewAnchors(root).length > 0;
+  }
+
+  function enforceWebFilterIfNeeded(root = document) {
+    const url = getUrl();
+    if (!isGoogleSearchPage(url)) return;
+    if (hasExplicitMode(url)) return;
+
+    const query = getCurrentQuery(url);
+    if (!query) return;
+    if (!shouldRedirectToWebFilter(root)) return;
+
+    if (wasJustRedirected(query)) {
+      clearRedirectMark();
+      return;
+    }
+
+    markRedirected(query);
+    url.searchParams.set("udm", WEB_FILTER_VALUE);
+    location.replace(url.toString());
+  }
+
+  function runSearchPass(root = document) {
+    if (!isGoogleSearchPage()) return;
+    enforceWebFilterIfNeeded(root);
+    hideBlockedTabs(root);
+    hideAiOverview(root);
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        runSearchPass(node);
+      }
+    }
+  });
+
+  runSearchPass(document);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  startBurst(() => runSearchPass(document), 250, 16);
+  startUrlWatcher(() => runSearchPass(document));
+
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => runSearchPass(document),
+                            { once: true }
+  );
+}
+
+// ===== Main =====
+function init() {
+  const url = getUrl();
+
+  if (isColabPage(url)) {
+    initColab();
+    return;
+  }
+
+  if (isGoogleSearchPage(url)) {
+    initGoogleSearch();
+    return;
+  }
+
+  if (isDocsOrSlidesContext()) {
+    initDocsSlides();
   }
 }
 
-// ===== Sweep =====
-function sweep(root = document) {
-  // 1) Colab widgets
-  for (const node of findAll(root, WIDGET_SELECTORS)) removeNode(node);
-
-  // 2) Colab AI buttons + companions
-  for (const btn of findAll(root, BUTTON_SELECTORS)) removeButtonAndCompanions(btn);
-
-  // 3) Colab AI menu items (safety net)
-  for (const n of findAll(root, [
-    'md-menu-item[command="generate-code"]',
-    'md-menu-item[command="explain-cell"]',
-    'md-menu-item[command="transform-code"]'
-  ])) removeNode(n);
-
-  // 4) YouTube embed panel + tab button in Slides/Docs
-  for (const n of findAll(root, YOUTUBE_SELECTORS)) removeNode(n);
-
-  // 5) Google Search AI Overview
-  for (const n of findAll(root, AI_OVERVIEW_SELECTORS)) removeNode(n);
-}
-
-// ===== Observe + periodic sweeps =====
-sweep();
-
-const mo = new MutationObserver(muts => {
-  for (const m of muts) {
-    for (const n of m.addedNodes || []) if (n && n.nodeType === 1) sweep(n);
-    if (m.type === 'attributes' && m.target && m.target.nodeType === 1) sweep(m.target);
-  }
-});
-mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
-
-let tick = 0;
-const fast = setInterval(() => {
-  sweep();
-  if (++tick >= 20) { clearInterval(fast); } // ~5s at 250ms
-}, 250);
-
-setInterval(sweep, 2000);
-
-document.addEventListener('DOMContentLoaded', () => sweep(), { once: true });
+init();
+})();

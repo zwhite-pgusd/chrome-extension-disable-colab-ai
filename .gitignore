@@ -17,4 +17,5 @@ Thumbs.db
 *~
 
 recycle/
-*.bak
+*.bak*
+*.zip

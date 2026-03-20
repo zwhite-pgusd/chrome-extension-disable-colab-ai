@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "pgext",
-  "version": "1.0.5",
-  "description": "Removes generative AI elements from Google Colab. Blocks YouTube embedding in Google Slides and Docs. Hides AI Overview on Google Search.",
+  "version": "1.0.6",
+  "description": "Removes generative AI elements from Google Colab. Blocks YouTube embedding in Google Docs and Slides. Suppresses AI UI on Google Search.",
   "icons": {
     "16": "icons/16.png",
     "48": "icons/48.png",
@@ -11,9 +11,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://colab.research.google.com/*",
-        "https://docs.google.com/*"
-        /*"https://www.google.com/search*"*/
+        "https://colab.research.google.com/*"
       ],
       "css": [
         "content.css"
@@ -21,8 +19,27 @@
       "js": [
         "content.js"
       ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://docs.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": [
+        "https://www.google.com/search*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
     }
   ],
   "update_url": "https://zwhite-pgusd.github.io/chrome-extension-disable-colab-ai/updates.xml",
