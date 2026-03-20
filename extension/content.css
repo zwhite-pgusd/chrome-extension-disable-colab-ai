@@ -1,31 +1,25 @@
-/* Light-DOM paint-time hide (shadow DOM requires JS removal) */
+/* CSS is intentionally conservative.
+ * - Colab uses CSS for stable paint-time hiding.
+ * - Docs/Slides YouTube blocking is handled in JS because the picker lives in
+ *   a dynamic iframe and Google changes its internal jsname/class structure.
+ * - Google Search AI suppression is handled in JS to avoid hiding legitimate
+ *   result modules with brittle selectors.
+ */
 
 /* ===== Colab AI ===== */
 colab-composer,
 colab-cell-placeholder,
 colab-composer-floating-spark,
 md-outlined-button[data-test-id="explain-error"],
+md-icon-button[data-test-id="explain-error"],
 md-icon-button[data-aria-label="Available AI features"],
+md-icon-button[aria-label="Available AI features"],
 md-icon-button[aria-labelledby^="ai-menu-anchor"],
 md-icon-button[aria-describedby^="ai-menu-anchor-"],
 md-icon-button[id^="ai-menu-anchor-"] {
   display: none !important;
 }
 
-md-icon-button[aria-label="Available AI features"],
 colab-cell-placeholder[widgetid="editor.widget.cellPlaceholderHint"] {
-  display: none !important;
-}
-
-/* ===== Slides/Docs: block YouTube embed panel and tab ===== */
-div[jsname="MVsrn"],
-div[jsname="h0T7hb"] {
-  display: none !important;
-}
-
-/* ===== Google Search: hide AI Overview ===== */
-div[data-hveid="CAoQBg"],
-div[jsname="Zlxsqf"],
-div[data-mg-cp="YzCcne"] {
   display: none !important;
 }
