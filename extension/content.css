@@ -1,4 +1,6 @@
 /* Light-DOM paint-time hide (shadow DOM requires JS removal) */
+
+/* ===== Colab AI ===== */
 colab-composer,
 colab-cell-placeholder,
 colab-composer-floating-spark,
@@ -12,5 +14,18 @@ md-icon-button[id^="ai-menu-anchor-"] {
 
 md-icon-button[aria-label="Available AI features"],
 colab-cell-placeholder[widgetid="editor.widget.cellPlaceholderHint"] {
+  display: none !important;
+}
+
+/* ===== Slides/Docs: block YouTube embed panel and tab ===== */
+div[jsname="MVsrn"],
+div[jsname="h0T7hb"] {
+  display: none !important;
+}
+
+/* ===== Google Search: hide AI Overview ===== */
+div[data-hveid="CAoQBg"],
+div[jsname="Zlxsqf"],
+div[data-mg-cp="YzCcne"] {
   display: none !important;
 }

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>pgext Icon Generator</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+            padding: 40px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .container {
+            display: flex;
+            gap: 30px;
+            align-items: flex-end;
+            margin-top: 20px;
+        }
+        .icon-wrapper {
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid #dee2e6;
+            background-color: transparent;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        a {
+            display: block;
+            margin-top: 12px;
+            padding: 8px 12px;
+            background-color: #0056b3;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        a:hover {
+            background-color: #004494;
+        }
+    </style>
+</head>
+<body>
+    <h2>pgext Icon Generator</h2>
+    <p>Click the buttons below to download your generated extension icons. The script produces a clean, dark-themed rounded icon with "pg" typography, optimized for Chrome's UI.</p>
+
+    <div class="container" id="output"></div>
+
+    <script>
+        const sizes = [128, 48, 16];
+        const output = document.getElementById('output');
+
+        sizes.forEach(size => {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            // Set up background (Rounded Rectangle)
+            ctx.fillStyle = '#2c3e50'; // Dark slate blue
+            ctx.beginPath();
+            // Fallback for older browsers, though roundRect is standard now
+            if (ctx.roundRect) {
+                ctx.roundRect(0, 0, size, size, size * 0.2);
+            } else {
+                ctx.rect(0, 0, size, size);
+            }
+            ctx.fill();
+
+            // Set up typography
+            ctx.fillStyle = '#ecf0f1'; // Off-white
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Scale font size proportionally
+            const fontSize = Math.floor(size * 0.55);
+            ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
+
+            // Adjust vertical alignment slightly for baseline offset
+            const yOffset = size * 0.05;
+            ctx.fillText('pg', size / 2, (size / 2) + yOffset);
+
+            // Create DOM elements for rendering and downloading
+            const wrapper = document.createElement('div');
+            wrapper.className = 'icon-wrapper';
+
+            const link = document.createElement('a');
+            link.download = `${size}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.textContent = `Download ${size}.png`;
+
+            wrapper.appendChild(canvas);
+            wrapper.appendChild(link);
+            output.appendChild(wrapper);
+        });
+    </script>
+</body>
+</html>

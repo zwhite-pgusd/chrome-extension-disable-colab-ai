@@ -1,8 +1,21 @@
-// Disable Google Colab AI — v1.5
+// Disable Google Colab AI + Block YouTube Embeds + Hide Google AI Overview — v1.0.5
+//
+// Colab AI blocks:
 // - Shadow-DOM aware
 // - Removes AI toolbar button and its linked menu/tooltip
-// - Removes "Explain error" AI button specifically (avoids breaking next-steps container)
+// - Removes "Explain error" AI button specifically
 // - MutationObserver + periodic sweep to survive Lit re-renders
+//
+// Slides/Docs YouTube block:
+// - Hides the YouTube tab panel inside the "Insert video" dialog
+// - Hides the YouTube tab button so users cannot switch to it
+// - Leaves the Google Drive tab and dialog chrome fully intact
+//
+// Google Search AI Overview block:
+// - Targets the AI Overview container by multiple stable attributes
+// - Uses layered selectors so if one changes, others still catch it
+
+// ===== Colab selectors =====
 
 const BUTTON_SELECTORS = [
   'md-icon-button[data-aria-label="Available AI features"]',
@@ -17,6 +30,22 @@ const WIDGET_SELECTORS = [
   'colab-composer',
 'colab-cell-placeholder',
 'colab-composer-floating-spark'
+];
+
+// ===== Slides/Docs YouTube selectors =====
+const YOUTUBE_SELECTORS = [
+  'div[jsname="MVsrn"]',   // YouTube search panel
+'div[jsname="h0T7hb"]'  // YouTube tab button
+];
+
+// ===== Google Search AI Overview selectors =====
+// Primary: the outermost wrapper div carries data-hveid="CAoQBg" consistently
+// across searches. The inner div[jsname="Zlxsqf"] is the content block itself.
+// We target both so either one is sufficient to remove the whole section.
+const AI_OVERVIEW_SELECTORS = [
+  'div[data-hveid="CAoQBg"]',  // outermost AI Overview wrapper
+'div[jsname="Zlxsqf"]',      // inner AI Overview content block
+'div[data-mg-cp="YzCcne"]'   // data-mcpr container (extra safety net)
 ];
 
 // ===== Shadow DOM helpers =====
@@ -50,65 +79,62 @@ function removeNode(el) {
 }
 
 function removeButtonAndCompanions(btn) {
-  // Remove the button itself
   removeNode(btn);
 
-  // Determine anchor id used by menu/tooltip, from the attributes we saw:
-  const id = btn.getAttribute('id'); // e.g., "ai-menu-anchor-7-u4pUJy0TDP"
+  const id = btn.getAttribute('id');
   const labelledBy = btn.getAttribute('aria-labelledby');
-  const describedBy = btn.getAttribute('aria-describedby'); // e.g., "...-tooltip"
-
+  const describedBy = btn.getAttribute('aria-describedby');
   const anchorId = id || labelledBy || (describedBy ? describedBy.replace(/-tooltip$/, '') : null);
 
-  // Remove associated <md-menu> and <colab-tooltip-trigger> that reference the anchor
   if (anchorId) {
-    for (const root of [document]) {
-      for (const n of findAll(root, [
-        `md-menu[anchor="${anchorId}"]`,
-        `md-menu[aria-labelledby="${anchorId}"]`,
-        `colab-tooltip-trigger[for="${anchorId}"]`,
-        `#${anchorId}-tooltip`
-      ])) removeNode(n);
-    }
+    for (const n of findAll(document, [
+      `md-menu[anchor="${anchorId}"]`,
+      `md-menu[aria-labelledby="${anchorId}"]`,
+      `colab-tooltip-trigger[for="${anchorId}"]`,
+      `#${anchorId}-tooltip`
+    ])) removeNode(n);
   }
 }
 
+// ===== Sweep =====
 function sweep(root = document) {
-  // 1) Remove the standalone widgets (composer/placeholder/spark)
+  // 1) Colab widgets
   for (const node of findAll(root, WIDGET_SELECTORS)) removeNode(node);
 
-  // 2) Remove the AI toolbar button(s) and their companions
+  // 2) Colab AI buttons + companions
   for (const btn of findAll(root, BUTTON_SELECTORS)) removeButtonAndCompanions(btn);
 
-  // 3) As a safety net, if we spot the AI menu or items without the button, remove them
+  // 3) Colab AI menu items (safety net)
   for (const n of findAll(root, [
     'md-menu-item[command="generate-code"]',
     'md-menu-item[command="explain-cell"]',
     'md-menu-item[command="transform-code"]'
   ])) removeNode(n);
+
+  // 4) YouTube embed panel + tab button in Slides/Docs
+  for (const n of findAll(root, YOUTUBE_SELECTORS)) removeNode(n);
+
+  // 5) Google Search AI Overview
+  for (const n of findAll(root, AI_OVERVIEW_SELECTORS)) removeNode(n);
 }
 
 // ===== Observe + periodic sweeps =====
-sweep(); // earliest pass
+sweep();
 
 const mo = new MutationObserver(muts => {
   for (const m of muts) {
     for (const n of m.addedNodes || []) if (n && n.nodeType === 1) sweep(n);
-    // If attributes change on existing nodes (Lit toggles), re-scan
     if (m.type === 'attributes' && m.target && m.target.nodeType === 1) sweep(m.target);
   }
 });
 mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
 
-// Early aggressive sweeps for first few seconds, then back off
 let tick = 0;
 const fast = setInterval(() => {
   sweep();
   if (++tick >= 20) { clearInterval(fast); } // ~5s at 250ms
 }, 250);
 
-// Long-tail sweep every 2s (Lit hot-swaps templates sometimes)
 setInterval(sweep, 2000);
 
-// Also run at DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => sweep(), { once: true });
