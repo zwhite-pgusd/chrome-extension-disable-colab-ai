@@ -579,26 +579,23 @@ function initGoogleSearch() {
     }
   }
 
-  function shouldRedirectToWebFilter(root = document) {
-    const url = getUrl();
-    if (!isGoogleSearchPage(url)) return false;
-    if (hasExplicitMode(url)) return false;
-
-    const query = getCurrentQuery(url);
-    if (!query) return false;
-
-    return findAiOverviewAnchors(root).length > 0;
-  }
-
-  function enforceWebFilterIfNeeded(root = document) {
+  function enforceWebFilterIfNeeded() {
+    // Redirect proactively — don't wait for the AI Overview heading to appear
+    // in the DOM. At document_start the page is empty so a DOM-based check
+    // will never find the heading in time. Any /search URL with no udm param
+    // is the default "All" results page, which is the one that serves AI Overview.
+    // If udm is already present (user chose a tab, or a GAC policy set it),
+    // we leave the URL completely alone.
     const url = getUrl();
     if (!isGoogleSearchPage(url)) return;
     if (hasExplicitMode(url)) return;
 
     const query = getCurrentQuery(url);
     if (!query) return;
-    if (!shouldRedirectToWebFilter(root)) return;
 
+    // sessionStorage loop guard: if we already redirected this exact query in
+    // this tab session and still ended up back here without udm (e.g. a proxy
+    // stripped the param), clear the mark and bail to avoid a redirect loop.
     if (wasJustRedirected(query)) {
       clearRedirectMark();
       return;
@@ -611,7 +608,7 @@ function initGoogleSearch() {
 
   function runSearchPass(root = document) {
     if (!isGoogleSearchPage()) return;
-    enforceWebFilterIfNeeded(root);
+    enforceWebFilterIfNeeded();
     hideBlockedTabs(root);
     hideAiOverview(root);
   }

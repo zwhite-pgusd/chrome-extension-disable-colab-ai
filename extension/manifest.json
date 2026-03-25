@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "pgext",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Removes generative AI elements from Google Colab. Blocks YouTube embedding in Google Docs and Slides. Suppresses AI UI on Google Search.",
   "icons": {
     "16": "icons/16.png",
